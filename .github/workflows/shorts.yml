@@ -32,6 +32,7 @@ jobs:
       - name: DEBUG – show first 15 lines of script
         run: |
         head -n 15 faceless_short_automation.py
+        
       - name: DEBUG – show first 15 lines of script
         run: |
         head -n 15 faceless_short_automation.py
