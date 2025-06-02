@@ -1,16 +1,16 @@
 """
-Faceless YouTube‑Shorts Automation – OpenAI v1, bilingual (EN/IT)
+Faceless YouTube-Shorts Automation – OpenAI v1, bilingual (EN/IT)
 ================================================================
-A self‑contained script that:
-1. Generates a short, fun 3‑fact script with a question using OpenAI Chat Completions.
+A self-contained script that:
+1. Generates a short, fun 3-fact script with a question using OpenAI Chat Completions.
 2. Downloads 3 vertical stock clips from Pexels.
-3. Synthesises a voice‑over with ElevenLabs.
-4. Overlays caption + concatenates video & audio into an 18‑second short.
+3. Synthesises a voice-over with ElevenLabs.
+4. Overlays caption + concatenates video & audio into an 18-second short.
 5. (Optionally) uploads the short to YouTube.
 
 Key robustness tweaks over the original version
 ----------------------------------------------
-* **New OpenAI client v1** with exponential‑backoff retry.
+* **New OpenAI client v1** with exponential-backoff retry.
 * **Strict length check** (<400 chars) for ElevenLabs TTS.
 * **Guaranteed vertical clips** – filters out landscape video_files.
 * **UUID filenames** – avoids collisions in `/tmp`.
@@ -18,7 +18,7 @@ Key robustness tweaks over the original version
 * **Resource cleanup** – closes MoviePy clips after rendering.
 * **Graceful error handling** for API/network hiccups.
 
-Environment variables expected (e.g. in GitHub Actions secrets):
+Environment variables expected (e.g. in GitHub Actions secrets):
 ----------------------------------------------------------------
 - `OPENAI_API_KEY`       (required)
 - `PEXELS_API_KEY`       (required)
@@ -62,13 +62,24 @@ except ImportError:  # tenacity is optional – script still runs
 # ─────────────────────────── CONFIG ────────────────────────────
 load_dotenv()
 
+# Verifica che la chiave sia presente (fail fast se mancante)
+if not os.getenv("OPENAI_API_KEY"):
+    print("ERROR: OPENAI_API_KEY non impostata.")
+    sys.exit(1)
 client               = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 PEXELS_API_KEY       = os.getenv("PEXELS_API_KEY")
-ELEVEN_KEY           = os.getenv("ELEVENLABS_API_KEY")
+if not PEXELS_API_KEY:
+    print("WARNING: PEXELS_API_KEY non impostata. fetch_vertical_clip fallirà se chiamata.")
 HEADERS_PEXELS       = {"Authorization": PEXELS_API_KEY or ""}
+
+ELEVEN_KEY           = os.getenv("ELEVENLABS_API_KEY")
+if not ELEVEN_KEY:
+    print("WARNING: ELEVENLABS_API_KEY non impostata. generate_voiceover fallirà se chiamata.")
+
 WORKDIR              = Path(tempfile.gettempdir()) / "short_builder"
 WORKDIR.mkdir(exist_ok=True)
-TARGET_DURATION      = 18          # seconds – YouTube Shorts sweet‑spot
+TARGET_DURATION      = 18          # seconds – YouTube Shorts sweet-spot
 DEFAULT_LANG         = os.getenv("LANGUAGE", "en").lower()  # en / it
 FONT_PREFERRED       = "Montserrat-Bold"
 FONT_FALLBACK        = "DejaVu-Sans-Bold"   # usually available on Linux
@@ -89,10 +100,10 @@ RETRY_MATCH = (RateLimitError, APIError, TimeoutError)
 
 @retry(wait=wait_random_exponential(min=2, max=20), stop=stop_after_attempt(4))
 def generate_script(topic: str, lang: str) -> str:
-    """Return ≤60‑word, 3‑fact script ending with a question."""
+    """Return ≤60-word, 3-fact script ending with a question."""
     prompt = (
         f"Scrivi un copione divertente in 3 fatti su {topic} in massimo 60 parole. Termina con una domanda." if lang == "it" else
-        f"Write a fun, 3‑fact script about {topic} in ≤60 words. End with a question."
+        f"Write a fun, 3-fact script about {topic} in ≤60 words. End with a question."
     )
     resp = client.chat.completions.create(
         model="gpt-3.5-turbo-0125",
@@ -114,7 +125,7 @@ def _vertical_files(video_dict: dict) -> List[dict]:
 @retry(wait=wait_random_exponential(min=2, max=15), stop=stop_after_attempt(3))
 def fetch_vertical_clip(query: str) -> Path:
     if not PEXELS_API_KEY:
-        raise EnvironmentError("PEXELS_API_KEY not set.")
+        raise EnvironmentError("PEXELS_API_KEY non impostata.")
     r = requests.get(
         "https://api.pexels.com/videos/search",
         params={"query": query, "orientation": "vertical", "per_page": 10},
@@ -122,11 +133,11 @@ def fetch_vertical_clip(query: str) -> Path:
     r.raise_for_status()
     vids = r.json().get("videos", [])
     if not vids:
-        raise RuntimeError(f"No vertical clips for '{query}'.")
+        raise RuntimeError(f"Nessun clip verticale per '{query}'.")
     chosen = random.choice(vids)
     files = _vertical_files(chosen)
     if not files:
-        raise RuntimeError("Chosen video has no vertical files – retrying.")
+        raise RuntimeError("Il video scelto non ha varianti verticali: riprovo.")
     file_link = min(files, key=lambda f: f["width"])["link"]  # smallest vertical variant
     out_path = temp_file(".mp4")
     with requests.get(file_link, stream=True, timeout=60) as src, open(out_path, "wb") as dst:
@@ -139,9 +150,10 @@ def fetch_vertical_clip(query: str) -> Path:
 @retry(wait=wait_random_exponential(min=2, max=10), stop=stop_after_attempt(3))
 def generate_voiceover(text: str, lang: str) -> Path:
     if not ELEVEN_KEY:
-        raise EnvironmentError("ELEVENLABS_API_KEY not set.")
+        raise EnvironmentError("ELEVENLABS_API_KEY non impostata.")
     if len(text) > 400:
-        raise ValueError("Script too long for ElevenLabs TTS (400 char limit)")
+        # In alternativa potresti troncare e loggare
+        raise ValueError("Script troppo lungo per ElevenLabs TTS (400 char limit).")
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID.get(lang, VOICE_ID['en'])}"
     r = requests.post(
         url,
@@ -209,12 +221,12 @@ def upload_short(video: Path, title: str, description: str) -> None:
         from google.oauth2.credentials import Credentials  # type: ignore
         from googleapiclient.errors import HttpError  # type: ignore
     except ImportError:
-        print("google-api-python-client not installed – skipping upload")
+        print("google-api-python-client non installato – skipping upload")
         return
 
     token = os.getenv("YT_REFRESH_TOKEN")
     if not token:
-        print("YT_REFRESH_TOKEN not set – skipping upload")
+        print("YT_REFRESH_TOKEN non impostato – skipping upload")
         return
 
     creds = Credentials.from_authorized_user_info({"refresh_token": token})
@@ -242,14 +254,14 @@ def upload_short(video: Path, title: str, description: str) -> None:
             if status:
                 print(f" {status.progress()*100:.1f}%", end="", flush=True)
     except HttpError as e:
-        print("\nYouTube upload failed:", e)
+        print("\nYouTube upload fallito:", e)
 
 # ────────────────────────── MISC HELPERS ───────────────────────
 
 TOPICS = [
     "quantum computing",
     "Mars colonization",
-    "deep‑sea creatures",
+    "deep-sea creatures",
     "ancient Egyptian tech",
     "AI art",
     "sustainable architecture",
@@ -266,7 +278,7 @@ def run_once(lang: str, upload: bool, dry_run: bool = False) -> None:
     print("[SCRIPT]\n" + script + "\n")
 
     if dry_run:
-        print("Dry‑run: skipping video/TTS/download/upload.")
+        print("Dry-run: skipping video/TTS/download/upload.")
         return
 
     # 1. Fetch 3 vertical clips (keywords = first 3 words of topic)
@@ -292,7 +304,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Faceless Shorts generator")
     parser.add_argument("--lang", choices=["en", "it"], default=DEFAULT_LANG, help="Language of the short")
     parser.add_argument("--upload", action="store_true", help="Upload the resulting video to YouTube")
-    parser.add_argument("--dry-run", action="store_true", help="Skip network‑heavy steps (for CI smoke test)")
+    parser.add_argument("--dry-run", action="store_true", help="Skip network-heavy steps (for CI smoke test)")
     args = parser.parse_args()
 
     try:
