@@ -31,10 +31,10 @@ jobs:
           echo "$YT_CLIENT_SECRET_JSON" | base64 -d > client_secret.json
       - name: DEBUG – show first 15 lines of script
         run: |
-    head -n 15 faceless_short_automation.py
+        head -n 15 faceless_short_automation.py
       - name: DEBUG – show first 15 lines of script
         run: |
-    head -n 15 faceless_short_automation.py
+        head -n 15 faceless_short_automation.py
 
       - name: Ensure OpenAI v1
         run: pip install --upgrade 'openai>=1.0.0'
