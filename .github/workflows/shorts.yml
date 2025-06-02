@@ -29,7 +29,9 @@ jobs:
           YT_CLIENT_SECRET_JSON: ${{ secrets.YT_CLIENT_SECRET_JSON }}
         run: |
           echo "$YT_CLIENT_SECRET_JSON" | base64 -d > client_secret.json
-
+      - name: DEBUG – show first 15 lines of script
+        run: |
+    head -n 15 faceless_short_automation.py
       - name: Generate & upload Short
         env:
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
