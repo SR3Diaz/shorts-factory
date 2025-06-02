@@ -36,7 +36,10 @@ jobs:
         run: |
     head -n 15 faceless_short_automation.py
 
-      - name: Generate & upload Short
+      - name: DEBUG – show first 15 lines of script
+  run: |
+    head -n 15 faceless_short_automation.py
+    - name: Generate & upload Short
         env:
           OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
           PEXELS_API_KEY:      ${{ secrets.PEXELS_API_KEY }}
