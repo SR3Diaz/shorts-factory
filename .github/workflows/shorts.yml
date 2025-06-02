@@ -1,34 +1,48 @@
-steps:
-  - uses: actions/checkout@v4
+name: Build & upload Short
 
-  - name: Set up Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: '3.11'
+on:
+  schedule:
+    # 17:00 UTC = 19:00 Italia (in estate) / 18:00 (in inverno)
+    - cron: '0 17 * * *'
+  workflow_dispatch:   # pulsante “Run workflow” nel tab Actions
 
-  - name: System deps
-    run: sudo apt-get update && sudo apt-get install -y ffmpeg
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency: short_factory
 
-  - name: Install Python deps
-    run: pip install -r requirements.txt
+    steps:
+      - uses: actions/checkout@v4
 
-  - name: Ensure OpenAI v1
-    run: pip install --upgrade 'openai>=1.0.0'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-  - name: Re-create OAuth file
-    env:
-      YT_CLIENT_SECRET_JSON: ${{ secrets.YT_CLIENT_SECRET_JSON }}
-    run: |
-      echo "$YT_CLIENT_SECRET_JSON" | base64 -d > client_secret.json
+      - name: System deps
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-  - name: DEBUG – show first 15 lines of script
-    run: |
-      head -n 15 faceless_short_automation.py
+      - name: Install Python deps
+        run: pip install -r requirements.txt
 
-  - name: Generate & upload Short
-    env:
-      OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
-      PEXELS_API_KEY:      ${{ secrets.PEXELS_API_KEY }}
-      ELEVENLABS_API_KEY:  ${{ secrets.ELEVENLABS_API_KEY }}
-      YT_REFRESH_TOKEN:    ${{ secrets.YT_REFRESH_TOKEN }}
-    run: python faceless_short_automation.py
+      - name: Ensure OpenAI v1
+        run: pip install --upgrade 'openai>=1.0.0'
+
+      - name: Re-create OAuth file
+        env:
+          YT_CLIENT_SECRET_JSON: ${{ secrets.YT_CLIENT_SECRET_JSON }}
+        run: |
+          echo "$YT_CLIENT_SECRET_JSON" | base64 -d > client_secret.json
+
+      - name: DEBUG – show first 15 lines of script
+        run: |
+          head -n 15 faceless_short_automation.py
+
+      - name: Generate & upload Short
+        env:
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
+          PEXELS_API_KEY:      ${{ secrets.PEXELS_API_KEY }}
+          ELEVENLABS_API_KEY:  ${{ secrets.ELEVENLABS_API_KEY }}
+          YT_REFRESH_TOKEN:    ${{ secrets.YT_REFRESH_TOKEN }}
+          LANGUAGE:            en               # cambia in it se vuoi
+        run: python faceless_short_automation.py
