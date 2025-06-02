@@ -1,35 +1,23 @@
 """
 Faceless YouTube Shorts Automation Script
 ========================================
-This script assembles a 15–20‑second vertical video from:
-  • A short AI‑generated fact script (OpenAI)
-  • 3 royalty‑free vertical clips (Pexels)
-  • An AI voice‑over track (ElevenLabs)
-It then renders the final MP4 with hard‑burned captions and (optionally)
-uploads it as a YouTube Short.
+This script assembles a 15–20‑second vertical video and can optionally
+upload it to YouTube.  *New in this version*: add the `--auth` flag to run
+an OAuth flow once and print the **refresh token** you need for headless
+uploads on GitHub Actions.
 
-Before you run it
------------------
-1. Create a virtual environment and install dependencies:
-   pip install openai moviepy requests python-dotenv google-api-python-client google-auth-oauthlib
-
-2. Put your API keys in a .env file next to this script:
-   OPENAI_API_KEY="sk-..."
-   PEXELS_API_KEY="563492ad..."
-   ELEVENLABS_API_KEY="..."
-   YT_CLIENT_SECRET_FILE="client_secret.json"  # OAuth 2.0 file from Google Console
-   YT_REFRESH_TOKEN="..."                       # Generate once via OAuth flow
-   YT_CHANNEL_ID="UC..."                       # Your channel ID
-
-3. Make sure **ffmpeg** is installed and on the PATH (MoviePy needs it).
-
-4. The first run asks Google consent in a browser to store a refresh token;
-   subsequent runs are headless.
-
-Schedule
---------
-Run daily via cron or the Windows Task Scheduler. For example (Linux):
-   0 18 * * * /usr/bin/python /path/faceless_short_automation.py >> shorts.log 2>&1
+Usage
+-----
+1. **First run locally (once)** to create the token:
+   ```bash
+   python faceless_short_automation.py --auth
+   ```
+   Copy the printed `REFRESH_TOKEN` string into your GitHub secret
+   `YT_REFRESH_TOKEN`.
+2. **Normal run** (locally or in CI) without flags renders & uploads:
+   ```bash
+   python faceless_short_automation.py
+   ```
 """
 from __future__ import annotations
 import os
@@ -39,11 +27,22 @@ import json
 import tempfile
 from pathlib import Path
 from datetime import datetime
+import argparse
+import sys
 
 import requests
 import openai
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip, TextClip
+from moviepy.editor import (
+    VideoFileClip,
+    AudioFileClip,
+    concatenate_videoclips,
+    CompositeVideoClip,
+    TextClip,
+)
 from dotenv import load_dotenv
+
+# NEW: OAuth helper
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 # ---------------------------------------------------------------------------
 # Configuration & helpers
@@ -63,7 +62,25 @@ TARGET_DURATION = 18  # seconds
 FONT = "Montserrat-Bold"
 
 # ---------------------------------------------------------------------------
-# Step 1 – Generate a bite‑sized script
+# Step 0 – One‑time OAuth helper to get refresh token
+# ---------------------------------------------------------------------------
+
+def get_refresh_token() -> str:
+    """Run a browser OAuth flow and print a long‑lived refresh token."""
+    scopes = ["https://www.googleapis.com/auth/youtube.upload"]
+    if not Path("client_secret.json").exists():
+        sys.exit("ERROR: client_secret.json not found in current directory")
+
+    flow = InstalledAppFlow.from_client_secrets_file("client_secret.json", scopes=scopes)
+    creds = flow.run_local_server(port=0, prompt="consent")
+    token = creds.refresh_token
+    print("\nREFRESH_TOKEN:")
+    print(token)
+    print("\nCopy the above token into your GitHub secret YT_REFRESH_TOKEN.")
+    return token
+
+# ---------------------------------------------------------------------------
+# Step 1 – Generate a bite‑sized script
 # ---------------------------------------------------------------------------
 
 def generate_script(topic: str) -> str:
@@ -80,7 +97,7 @@ def generate_script(topic: str) -> str:
     return resp.choices[0].message.content.strip()
 
 # ---------------------------------------------------------------------------
-# Step 2 – Pull three vertical stock clips from Pexels
+# Step 2 – Pull three vertical stock clips from Pexels
 # ---------------------------------------------------------------------------
 
 def fetch_vertical_clip(query: str) -> Path:
@@ -103,11 +120,11 @@ def fetch_vertical_clip(query: str) -> Path:
     return out
 
 # ---------------------------------------------------------------------------
-# Step 3 – Make an AI voice‑over with ElevenLabs
+# Step 3 – Make an AI voice‑over with ElevenLabs
 # ---------------------------------------------------------------------------
 
 def generate_voiceover(text: str) -> Path:
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
+    url = "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL"
     headers = {
         "xi-api-key": ELEVEN_KEY,
         "Content-Type": "application/json",
@@ -121,21 +138,18 @@ def generate_voiceover(text: str) -> Path:
     return out
 
 # ---------------------------------------------------------------------------
-# Step 4 – Assemble video + burnt‑in captions
+# Step 4 – Assemble video + burnt‑in captions
 # ---------------------------------------------------------------------------
 
 def build_video(clips: list[Path], audio_path: Path, script: str, out_path: Path) -> None:
-    # Load clips and trim evenly to fit target duration
     raw_clips = [VideoFileClip(str(p)) for p in clips]
     slice_len = TARGET_DURATION / len(raw_clips)
     clipped = [c.subclip(0, min(slice_len, c.duration)) for c in raw_clips]
     video = concatenate_videoclips(clipped, method="compose")
 
-    # Voice‑over
     voice = AudioFileClip(str(audio_path))
     video = video.set_audio(voice)
 
-    # Add captions (simple centre‑bottom)
     caption = TextClip(
         textwrap.fill(script, 30),
         fontsize=60,
@@ -158,11 +172,10 @@ def build_video(clips: list[Path], audio_path: Path, script: str, out_path: Path
     )
 
 # ---------------------------------------------------------------------------
-# Step 5 – OPTIONAL: Upload to YouTube (Shorts upload = <60 s, 9:16)
+# Step 5 – OPTIONAL: Upload to YouTube
 # ---------------------------------------------------------------------------
 
 def upload_short(video_path: Path, title: str, description: str) -> None:
-    """Skeleton uploader. Fill in OAuth flow separately."""
     try:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
@@ -193,14 +206,14 @@ def upload_short(video_path: Path, title: str, description: str) -> None:
     print("\nUpload complete →", response.get("id"))
 
 # ---------------------------------------------------------------------------
-# Main “one‑shot” routine
+# Main routine
 # ---------------------------------------------------------------------------
 
 def pick_topic() -> str:
     trending = [
         "quantum computing",
         "Mars colonization",
-        "deep‑sea creatures",
+        "deep-sea creatures",
         "ancient Egyptian tech",
         "AI art",
         "sustainable architecture",
@@ -213,7 +226,6 @@ def run_once():
     script = generate_script(topic)
     print("SCRIPT:\n", script)
 
-    # Pull three clips matching each fact keyword
     keywords = topic.split()[:3]
     clips = [fetch_vertical_clip(k) for k in keywords]
     voice = generate_voiceover(script)
@@ -221,10 +233,21 @@ def run_once():
 
     build_video(clips, voice, script, out_file)
     print("Video rendered →", out_file)
-
-    # Upload automatically (uncomment when creds are ready)
+    # Uncomment when OAuth done
     # upload_short(out_file, f"3 facts about {topic} 🤯", script)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Faceless Shorts generator")
+    parser.add_argument(
+        "--auth",
+        action="store_true",
+        help="Run OAuth flow only and print refresh token (no video render)",
+    )
+    args = parser.parse_args()
+
+    if args.auth:
+        get_refresh_token()
+        sys.exit(0)
+
     run_once()
