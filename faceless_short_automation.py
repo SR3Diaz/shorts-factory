@@ -302,6 +302,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print("Fatal error:", exc)
         sys.exit(1)
-
-
-
