@@ -34,7 +34,6 @@ import textwrap
 import tempfile
 import argparse
 import sys
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,13 +48,15 @@ from moviepy.editor import (
     CompositeVideoClip,
     TextClip,
 )
-import openai
+from openai import OpenAI
 from openai.error import RateLimitError, APIError
 
+# ─────────────────────────── Optional retry decorator setup ───────────────────────────
 try:
     from tenacity import retry, wait_random_exponential, stop_after_attempt  # type: ignore
-except ImportError:  # tenacity is optional – script still runs
-    def retry(*_, **__) -> callable:  # type: ignore
+except ImportError:
+    # If tenacity isn’t installed, our @retry becomes a no-op
+    def retry(*_, **__) -> callable:
         def deco(fn):
             return fn
         return deco
@@ -65,12 +66,13 @@ except ImportError:  # tenacity is optional – script still runs
 # ─────────────────────────── CONFIG ────────────────────────────
 load_dotenv()
 
-# Verify that OPENAI_API_KEY is set
+# Fail fast if OPENAI_API_KEY is missing
 if not os.getenv("OPENAI_API_KEY"):
     print("ERROR: OPENAI_API_KEY is not set.")
     sys.exit(1)
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Instantiate the new v1 client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 if not PEXELS_API_KEY:
@@ -83,8 +85,8 @@ if not ELEVEN_KEY:
 
 WORKDIR = Path(tempfile.gettempdir()) / "short_builder"
 WORKDIR.mkdir(exist_ok=True)
-TARGET_DURATION = 18  # seconds – YouTube Shorts sweet-spot
-DEFAULT_LANG = os.getenv("LANGUAGE", "en").lower()  # en / it
+TARGET_DURATION = 18  # seconds – YouTube Shorts sweet spot
+DEFAULT_LANG = os.getenv("LANGUAGE", "en").lower()  # "en" or "it"
 FONT_PREFERRED = "Montserrat-Bold"
 FONT_FALLBACK = "DejaVu-Sans-Bold"  # usually available on Linux
 
@@ -98,6 +100,7 @@ def temp_file(ext: str) -> Path:
     return WORKDIR / f"{uuid.uuid4().hex}{ext}"
 
 # ─────────────────────────── OPENAI ────────────────────────────
+# Retry on transient OpenAI errors (rate limits, etc.)
 RETRY_EXCEPTIONS = (RateLimitError, APIError, TimeoutError)
 
 @retry(wait=wait_random_exponential(min=2, max=20), stop=stop_after_attempt(4))
@@ -109,7 +112,8 @@ def generate_script(topic: str, lang: str) -> str:
         else f"Write a fun, 3-fact script about {topic} in ≤60 words. End with a question."
     )
 
-    resp = openai.ChatCompletion.create(
+    # <-- HERE: use client.chat.completions.create (not openai.ChatCompletion.create) -->
+    resp = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.8,
@@ -117,7 +121,7 @@ def generate_script(topic: str, lang: str) -> str:
     )
     script = resp.choices[0].message.content.strip()
 
-    # Crude length guard – ElevenLabs limit is 400 chars (~75 words)
+    # Crude length guard – ElevenLabs has 400-character limit
     if len(script) > 390:
         script = " ".join(script.split()[:75])
     return script
@@ -150,11 +154,9 @@ def fetch_vertical_clip(query: str) -> Path:
     # Pick the smallest vertical variant
     file_link = min(files, key=lambda f: f["width"])["link"]
     out_path = temp_file(".mp4")
-
     with requests.get(file_link, stream=True, timeout=60) as src, open(out_path, "wb") as dst:
         for chunk in src.iter_content(chunk_size=8192):
             dst.write(chunk)
-
     return out_path
 
 # ─────────────────────── ELEVENLABS TTS ────────────────────────
@@ -181,7 +183,7 @@ def generate_voiceover(text: str, lang: str) -> Path:
 # ───────────────────────── VIDEO BUILD ─────────────────────────
 def _choose_font() -> str:
     try:
-        TextClip("test", font=FONT_PREFERRED)  # probe
+        TextClip("test", font=FONT_PREFERRED)  # probe availability
         return FONT_PREFERRED
     except Exception:
         return FONT_FALLBACK
@@ -206,7 +208,6 @@ def build_video(clips: List[Path], audio: Path, script: str, out_path: Path) -> 
     final = CompositeVideoClip(
         [vid, caption.set_position(("center", "bottom")).set_duration(vid.duration)]
     )
-
     final.write_videofile(
         str(out_path),
         codec="libx264",
