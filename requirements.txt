@@ -1,0 +1,6 @@
+openai==1.*
+moviepy==1.*
+requests==2.*
+python-dotenv==1.*
+google-api-python-client==2.*
+google-auth-oauthlib==1.*
