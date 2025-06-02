@@ -2,14 +2,17 @@ name: Build & upload Short
 
 on:
   schedule:
-    # 17:00 UTC = 19:00 Italia (in estate) / 18:00 (in inverno)
-    - cron: '0 17 * * *'
-  workflow_dispatch:   # pulsante “Run workflow” nel tab Actions
+    - cron:  '0 17 * * *'      # 17:00 UTC = 19:00 Europe/Rome
+  workflow_dispatch:           # “Run workflow” button
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    concurrency: short_factory
+
+    # Use a proper concurrency map instead of a bare string
+    concurrency:
+      group: short_factory
+      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@v4
@@ -25,18 +28,11 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
 
-      - name: Ensure OpenAI v1
-        run: pip install --upgrade 'openai>=1.0.0'
-
       - name: Re-create OAuth file
         env:
           YT_CLIENT_SECRET_JSON: ${{ secrets.YT_CLIENT_SECRET_JSON }}
         run: |
           echo "$YT_CLIENT_SECRET_JSON" | base64 -d > client_secret.json
-
-      - name: DEBUG – show first 15 lines of script
-        run: |
-          head -n 15 faceless_short_automation.py
 
       - name: Generate & upload Short
         env:
@@ -44,5 +40,4 @@ jobs:
           PEXELS_API_KEY:      ${{ secrets.PEXELS_API_KEY }}
           ELEVENLABS_API_KEY:  ${{ secrets.ELEVENLABS_API_KEY }}
           YT_REFRESH_TOKEN:    ${{ secrets.YT_REFRESH_TOKEN }}
-          LANGUAGE:            en               # cambia in it se vuoi
         run: python faceless_short_automation.py
