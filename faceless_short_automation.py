@@ -24,7 +24,6 @@ from pathlib import Path
 from datetime import datetime
 
 import requests
-from openai import OpenAI  # ✅ v1 interface
 from moviepy.editor import (
     VideoFileClip, AudioFileClip, concatenate_videoclips,
     CompositeVideoClip, TextClip,
